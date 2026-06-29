@@ -14,7 +14,113 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          display_name: string
+          email: string | null
+          id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name: string
+          email?: string | null
+          id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name?: string
+          email?: string | null
+          id?: string
+        }
+        Relationships: []
+      }
+      task_completions: {
+        Row: {
+          completed_at: string
+          completed_by: string
+          id: string
+          points_awarded: number
+          task_id: string
+        }
+        Insert: {
+          completed_at?: string
+          completed_by: string
+          id?: string
+          points_awarded?: number
+          task_id: string
+        }
+        Update: {
+          completed_at?: string
+          completed_by?: string
+          id?: string
+          points_awarded?: number
+          task_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_completions_completed_by_fkey"
+            columns: ["completed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_completions_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tasks: {
+        Row: {
+          active: boolean
+          assigned_to: string | null
+          created_at: string
+          description: string | null
+          frequency: Database["public"]["Enums"]["task_frequency"]
+          id: string
+          points: number
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          assigned_to?: string | null
+          created_at?: string
+          description?: string | null
+          frequency?: Database["public"]["Enums"]["task_frequency"]
+          id?: string
+          points?: number
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          assigned_to?: string | null
+          created_at?: string
+          description?: string | null
+          frequency?: Database["public"]["Enums"]["task_frequency"]
+          id?: string
+          points?: number
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tasks_assigned_to_fkey"
+            columns: ["assigned_to"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +129,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      task_frequency: "weekly" | "biweekly" | "monthly"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +256,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      task_frequency: ["weekly", "biweekly", "monthly"],
+    },
   },
 } as const
