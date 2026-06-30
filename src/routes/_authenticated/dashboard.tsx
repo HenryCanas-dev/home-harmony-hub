@@ -17,8 +17,9 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  CheckCircle2, Circle, LogOut, Plus, Trash2, Trophy, Sparkles, Home, Pencil,
+  CheckCircle2, Circle, LogOut, Plus, Trash2, Trophy, Sparkles, Home, Pencil, Bell, BellOff,
 } from "lucide-react";
+import { useTaskReminders } from "@/hooks/use-task-reminders";
 
 type Frequency = "weekly" | "biweekly" | "monthly";
 
