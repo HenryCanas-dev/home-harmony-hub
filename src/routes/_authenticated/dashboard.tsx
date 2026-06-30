@@ -211,6 +211,16 @@ function Dashboard() {
 
   const me = profiles.find((p) => p.id === userId);
 
+  // Pending tasks assigned to current user
+  const myPending = useMemo(
+    () => tasks
+      .filter((t) => t.assigned_to === userId && !isCompleteThisPeriod(t))
+      .map((t) => ({ id: t.id, title: t.title, assignedToMe: true, done: false })),
+    [tasks, completions, userId],
+  );
+  const { permission, request: requestNotif } = useTaskReminders(myPending);
+
+
   return (
     <div className="min-h-screen">
       <header className="border-b bg-card/60 backdrop-blur sticky top-0 z-10">
