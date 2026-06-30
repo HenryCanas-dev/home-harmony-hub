@@ -17,8 +17,9 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  CheckCircle2, Circle, LogOut, Plus, Trash2, Trophy, Sparkles, Home, Pencil,
+  CheckCircle2, Circle, LogOut, Plus, Trash2, Trophy, Sparkles, Home, Pencil, Bell, BellOff,
 } from "lucide-react";
+import { useTaskReminders } from "@/hooks/use-task-reminders";
 
 type Frequency = "weekly" | "biweekly" | "monthly";
 
@@ -210,6 +211,16 @@ function Dashboard() {
 
   const me = profiles.find((p) => p.id === userId);
 
+  // Pending tasks assigned to current user
+  const myPending = useMemo(
+    () => tasks
+      .filter((t) => t.assigned_to === userId && !isCompleteThisPeriod(t))
+      .map((t) => ({ id: t.id, title: t.title, assignedToMe: true, done: false })),
+    [tasks, completions, userId],
+  );
+  const { permission, request: requestNotif } = useTaskReminders(myPending);
+
+
   return (
     <div className="min-h-screen">
       <header className="border-b bg-card/60 backdrop-blur sticky top-0 z-10">
@@ -233,6 +244,21 @@ function Dashboard() {
                 <span className="text-sm font-medium">{me.display_name}</span>
               </div>
             )}
+            {permission !== "unsupported" && permission !== "granted" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={requestNotif}
+                className="gap-1"
+                title="Activar notificaciones"
+              >
+                <BellOff className="w-4 h-4" />
+                <span className="hidden sm:inline">Activar avisos</span>
+              </Button>
+            )}
+            {permission === "granted" && (
+              <Bell className="w-4 h-4 text-success" aria-label="Notificaciones activas" />
+            )}
             <Button variant="ghost" size="icon" onClick={signOut} title="Cerrar sesión">
               <LogOut className="w-4 h-4" />
             </Button>
@@ -241,6 +267,42 @@ function Dashboard() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+        {userId && (
+          <Card className="border-primary/30 bg-primary/5">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="flex items-center gap-2">
+                  <Bell className="w-5 h-5 text-primary" />
+                  <h2 className="font-bold">Tus pendientes</h2>
+                </div>
+                <Badge variant="secondary" className="font-bold">{myPending.length}</Badge>
+              </div>
+              {myPending.length === 0 ? (
+                <p className="text-sm text-muted-foreground">¡Todo al día! No tienes tareas pendientes 🎉</p>
+              ) : (
+                <ul className="space-y-1">
+                  {myPending.map((p) => (
+                    <li key={p.id} className="text-sm flex items-center gap-2">
+                      <Circle className="w-3 h-3 text-primary" />
+                      {p.title}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {permission === "default" && (
+                <p className="text-xs text-muted-foreground mt-3">
+                  💡 Activa los avisos para recibir notificaciones en tu celular. Instala la app desde el menú del navegador ("Agregar a pantalla de inicio") para recibirlas como una app nativa.
+                </p>
+              )}
+              {permission === "denied" && (
+                <p className="text-xs text-destructive mt-3">
+                  Las notificaciones están bloqueadas. Actívalas en los ajustes del navegador.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Ranking */}
         <section>
           <div className="flex items-center gap-2 mb-3">
