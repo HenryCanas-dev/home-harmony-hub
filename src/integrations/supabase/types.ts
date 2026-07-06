@@ -40,21 +40,27 @@ export type Database = {
           completed_at: string
           completed_by: string
           id: string
+          instance_id: string | null
           points_awarded: number
+          status: string | null
           task_id: string
         }
         Insert: {
           completed_at?: string
           completed_by: string
           id?: string
+          instance_id?: string | null
           points_awarded?: number
+          status?: string | null
           task_id: string
         }
         Update: {
           completed_at?: string
           completed_by?: string
           id?: string
+          instance_id?: string | null
           points_awarded?: number
+          status?: string | null
           task_id?: string
         }
         Relationships: [
@@ -66,7 +72,65 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "task_completions_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "task_instances"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "task_completions_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      task_instances: {
+        Row: {
+          assign_to_all: boolean
+          assigned_to: string | null
+          created_at: string
+          due_date: string
+          id: string
+          period_end: string
+          period_key: string
+          period_start: string
+          task_id: string
+        }
+        Insert: {
+          assign_to_all?: boolean
+          assigned_to?: string | null
+          created_at?: string
+          due_date: string
+          id?: string
+          period_end: string
+          period_key: string
+          period_start: string
+          task_id: string
+        }
+        Update: {
+          assign_to_all?: boolean
+          assigned_to?: string | null
+          created_at?: string
+          due_date?: string
+          id?: string
+          period_end?: string
+          period_key?: string
+          period_start?: string
+          task_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_instances_assigned_to_fkey"
+            columns: ["assigned_to"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_instances_task_id_fkey"
             columns: ["task_id"]
             isOneToOne: false
             referencedRelation: "tasks"
@@ -77,33 +141,39 @@ export type Database = {
       tasks: {
         Row: {
           active: boolean
+          assign_to_all: boolean
           assigned_to: string | null
           created_at: string
           description: string | null
           frequency: Database["public"]["Enums"]["task_frequency"]
           id: string
+          last_assigned_to: string | null
           points: number
           title: string
           updated_at: string
         }
         Insert: {
           active?: boolean
+          assign_to_all?: boolean
           assigned_to?: string | null
           created_at?: string
           description?: string | null
           frequency?: Database["public"]["Enums"]["task_frequency"]
           id?: string
+          last_assigned_to?: string | null
           points?: number
           title: string
           updated_at?: string
         }
         Update: {
           active?: boolean
+          assign_to_all?: boolean
           assigned_to?: string | null
           created_at?: string
           description?: string | null
           frequency?: Database["public"]["Enums"]["task_frequency"]
           id?: string
+          last_assigned_to?: string | null
           points?: number
           title?: string
           updated_at?: string
@@ -116,6 +186,13 @@ export type Database = {
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "tasks_last_assigned_to_fkey"
+            columns: ["last_assigned_to"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
     }
@@ -123,7 +200,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      ensure_period_instances: {
+        Args: { week_start: string }
+        Returns: undefined
+      }
     }
     Enums: {
       task_frequency: "weekly" | "biweekly" | "monthly"
