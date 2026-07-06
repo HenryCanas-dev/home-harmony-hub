@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -12,14 +12,18 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   CheckCircle2, Circle, LogOut, Plus, Trash2, Trophy, Sparkles, Home, Pencil, Bell, BellOff,
+  ChevronLeft, ChevronRight, CalendarClock, Users,
 } from "lucide-react";
 import { useTaskReminders } from "@/hooks/use-task-reminders";
+import { computeStatus, pointsFor, STATUS_LABEL, STATUS_COLOR, type CompletionStatus } from "@/lib/points";
+import { startOfWeek, addDays, toISODate, formatWeekLabel, formatDate, formatDateTime, isSameDay } from "@/lib/periods";
 
 type Frequency = "weekly" | "biweekly" | "monthly";
 
@@ -27,6 +31,7 @@ interface Profile {
   id: string;
   display_name: string;
   avatar_url: string | null;
+  created_at: string;
 }
 
 interface Task {
@@ -37,6 +42,19 @@ interface Task {
   points: number;
   assigned_to: string | null;
   active: boolean;
+  assign_to_all: boolean;
+  last_assigned_to: string | null;
+}
+
+interface TaskInstance {
+  id: string;
+  task_id: string;
+  period_key: string;
+  period_start: string; // date
+  period_end: string;   // date
+  due_date: string;     // date
+  assigned_to: string | null;
+  assign_to_all: boolean;
 }
 
 interface Completion {
@@ -45,6 +63,8 @@ interface Completion {
   completed_by: string;
   points_awarded: number;
   completed_at: string;
+  instance_id: string | null;
+  status: CompletionStatus | null;
 }
 
 const FREQ_LABEL: Record<Frequency, string> = {
@@ -78,10 +98,26 @@ function Dashboard() {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
   }, []);
 
+  // Semana visualizada (siempre lunes)
+  const todayMonday = useMemo(() => startOfWeek(new Date()), []);
+  const [viewMonday, setViewMonday] = useState<Date>(todayMonday);
+  const isCurrentWeek = isSameDay(viewMonday, todayMonday);
+  const isFutureWeek = viewMonday.getTime() > todayMonday.getTime();
+  const viewMondayISO = toISODate(viewMonday);
+
+  // Asegura instancias para la semana actual al entrar
+  useEffect(() => {
+    supabase.rpc("ensure_period_instances", { week_start: toISODate(todayMonday) }).then(({ error }) => {
+      if (error) console.error("ensure_period_instances", error);
+      qc.invalidateQueries({ queryKey: ["task_instances"] });
+      qc.invalidateQueries({ queryKey: ["tasks"] });
+    });
+  }, [todayMonday, qc]);
+
   const profilesQ = useQuery({
     queryKey: ["profiles"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("profiles").select("*").order("display_name");
+      const { data, error } = await supabase.from("profiles").select("*").order("created_at");
       if (error) throw error;
       return data as Profile[];
     },
@@ -96,6 +132,20 @@ function Dashboard() {
     },
   });
 
+  // Instancias que cubren la semana vista (período_start <= viewMonday <= período_end)
+  const instancesQ = useQuery({
+    queryKey: ["task_instances", viewMondayISO],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("task_instances")
+        .select("*")
+        .lte("period_start", viewMondayISO)
+        .gte("period_end", viewMondayISO);
+      if (error) throw error;
+      return data as TaskInstance[];
+    },
+  });
+
   const completionsQ = useQuery({
     queryKey: ["completions"],
     queryFn: async () => {
@@ -103,25 +153,54 @@ function Dashboard() {
         .from("task_completions")
         .select("*")
         .order("completed_at", { ascending: false })
-        .limit(500);
+        .limit(1000);
       if (error) throw error;
       return data as Completion[];
     },
   });
 
+  const profiles = profilesQ.data ?? [];
+  const tasks = tasksQ.data ?? [];
+  const instances = instancesQ.data ?? [];
+  const completions = completionsQ.data ?? [];
+
+  const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+  const profilesById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
+
+  const completionsByInstance = useMemo(() => {
+    const m = new Map<string, Completion[]>();
+    for (const c of completions) {
+      if (!c.instance_id) continue;
+      const arr = m.get(c.instance_id) ?? [];
+      arr.push(c);
+      m.set(c.instance_id, arr);
+    }
+    return m;
+  }, [completions]);
+
+  // Mutations
   const completeMut = useMutation({
-    mutationFn: async (task: Task) => {
+    mutationFn: async ({ instance, task }: { instance: TaskInstance; task: Task }) => {
       if (!userId) throw new Error("No user");
+      const status = computeStatus(instance.due_date);
+      const points = pointsFor(task.points, status);
       const { error } = await supabase.from("task_completions").insert({
         task_id: task.id,
         completed_by: userId,
-        points_awarded: task.points,
+        points_awarded: points,
+        instance_id: instance.id,
+        status,
       });
       if (error) throw error;
+      return { status, points };
     },
-    onSuccess: () => {
+    onSuccess: ({ status, points }) => {
       qc.invalidateQueries({ queryKey: ["completions"] });
-      toast.success("¡Tarea completada! 🎉");
+      const msg =
+        status === "on_time" ? `¡A tiempo! +${points} pts 🎉` :
+        status === "late" ? `Completada tarde (+${points} pts)` :
+        `Muy tarde (+${points} pts)`;
+      toast.success(msg);
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -138,11 +217,21 @@ function Dashboard() {
   });
 
   const assignMut = useMutation({
-    mutationFn: async ({ taskId, profileId }: { taskId: string; profileId: string | null }) => {
-      const { error } = await supabase.from("tasks").update({ assigned_to: profileId }).eq("id", taskId);
-      if (error) throw error;
+    mutationFn: async ({ instance, profileId }: { instance: TaskInstance; profileId: string | null }) => {
+      const { error: e1 } = await supabase.from("task_instances")
+        .update({ assigned_to: profileId })
+        .eq("id", instance.id);
+      if (e1) throw e1;
+      // La rotación futura continúa desde este responsable
+      const { error: e2 } = await supabase.from("tasks")
+        .update({ assigned_to: profileId, last_assigned_to: profileId })
+        .eq("id", instance.task_id);
+      if (e2) throw e2;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["task_instances"] });
+      qc.invalidateQueries({ queryKey: ["tasks"] });
+    },
   });
 
   const deleteTaskMut = useMutation({
@@ -152,6 +241,7 @@ function Dashboard() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tasks"] });
+      qc.invalidateQueries({ queryKey: ["task_instances"] });
       toast.success("Tarea eliminada");
     },
   });
@@ -161,46 +251,13 @@ function Dashboard() {
     router.navigate({ to: "/auth" });
   };
 
-  const profiles = profilesQ.data ?? [];
-  const tasks = tasksQ.data ?? [];
-  const completions = completionsQ.data ?? [];
+  // Ranking (semana calendario / mes actual)
+  const startOfCurrentWeek = todayMonday;
+  const startOfMonth = useMemo(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1), []);
 
-  // Period helpers
-  const now = new Date();
-  const startOfWeek = useMemo(() => {
-    const d = new Date(now);
-    const day = (d.getDay() + 6) % 7; // Monday=0
-    d.setDate(d.getDate() - day);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }, [now.toDateString()]);
-
-  const startOfBiweek = useMemo(() => {
-    const d = new Date(startOfWeek);
-    // align to even ISO week pairs
-    const weekNumber = Math.floor((d.getTime() - new Date(d.getFullYear(), 0, 1).getTime()) / (7 * 24 * 3600 * 1000));
-    if (weekNumber % 2 === 1) d.setDate(d.getDate() - 7);
-    return d;
-  }, [startOfWeek]);
-
-  const startOfMonth = useMemo(() => new Date(now.getFullYear(), now.getMonth(), 1), [now.toDateString()]);
-
-  // Is task complete in current period?
-  const taskPeriodStart = (t: Task) => {
-    if (t.frequency === "weekly") return startOfWeek;
-    if (t.frequency === "biweekly") return startOfBiweek;
-    return startOfMonth;
-  };
-
-  const isCompleteThisPeriod = (t: Task): Completion | null => {
-    const start = taskPeriodStart(t).getTime();
-    return completions.find((c) => c.task_id === t.id && new Date(c.completed_at).getTime() >= start) ?? null;
-  };
-
-  // Ranking
   const weekScore = (pid: string) =>
     completions
-      .filter((c) => c.completed_by === pid && new Date(c.completed_at) >= startOfWeek)
+      .filter((c) => c.completed_by === pid && new Date(c.completed_at) >= startOfCurrentWeek)
       .reduce((s, c) => s + c.points_awarded, 0);
 
   const monthScore = (pid: string) =>
@@ -210,15 +267,33 @@ function Dashboard() {
 
   const me = profiles.find((p) => p.id === userId);
 
-  // Pending tasks assigned to current user
-  const myPending = useMemo(
-    () => tasks
-      .filter((t) => t.assigned_to === userId && !isCompleteThisPeriod(t))
-      .map((t) => ({ id: t.id, title: t.title, assignedToMe: true, done: false })),
-    [tasks, completions, userId],
-  );
+  // Pendientes: tareas de la semana actual asignadas a mí (o assign_to_all) sin mi completion
+  const myPending = useMemo(() => {
+    if (!userId) return [];
+    return instances
+      .filter((inst) => {
+        if (!isCurrentWeek) return false;
+        const t = tasksById.get(inst.task_id);
+        if (!t) return false;
+        const iCompleted = (completionsByInstance.get(inst.id) ?? []).some((c) => c.completed_by === userId);
+        if (iCompleted) return false;
+        if (inst.assign_to_all) return true;
+        return inst.assigned_to === userId;
+      })
+      .map((inst) => {
+        const t = tasksById.get(inst.task_id)!;
+        return { id: inst.id, title: t.title, assignedToMe: true, done: false };
+      });
+  }, [instances, tasksById, completionsByInstance, userId, isCurrentWeek]);
+
   const { permission, request: requestNotif } = useTaskReminders(myPending);
 
+  // Historial: últimas 12 semanas navegables
+  const historyWeeks = useMemo(() => {
+    const arr: Date[] = [];
+    for (let i = 0; i < 12; i++) arr.push(addDays(todayMonday, -7 * i));
+    return arr;
+  }, [todayMonday]);
 
   return (
     <div className="min-h-screen">
@@ -244,13 +319,7 @@ function Dashboard() {
               </div>
             )}
             {permission !== "unsupported" && permission !== "granted" && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={requestNotif}
-                className="gap-1"
-                title="Activar notificaciones"
-              >
+              <Button variant="outline" size="sm" onClick={requestNotif} className="gap-1" title="Activar notificaciones">
                 <BellOff className="w-4 h-4" />
                 <span className="hidden sm:inline">Activar avisos</span>
               </Button>
@@ -266,7 +335,7 @@ function Dashboard() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-        {userId && (
+        {userId && isCurrentWeek && (
           <Card className="border-primary/30 bg-primary/5">
             <CardContent className="p-4">
               <div className="flex items-center justify-between gap-3 mb-2">
@@ -322,96 +391,210 @@ function Dashboard() {
           </Tabs>
         </section>
 
-        {/* Tasks */}
+        {/* Tasks + week navigator */}
         <section>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
             <div className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-primary" />
               <h2 className="text-xl font-bold">Tareas</h2>
             </div>
-            <TaskDialog profiles={profiles} onSaved={() => qc.invalidateQueries({ queryKey: ["tasks"] })} />
+            {isCurrentWeek && (
+              <TaskDialog profiles={profiles} onSaved={async () => {
+                await supabase.rpc("ensure_period_instances", { week_start: toISODate(todayMonday) });
+                qc.invalidateQueries({ queryKey: ["tasks"] });
+                qc.invalidateQueries({ queryKey: ["task_instances"] });
+              }} />
+            )}
           </div>
 
+          {/* Week navigator */}
+          <Card className="mb-3">
+            <CardContent className="p-3 flex items-center justify-between gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setViewMonday(addDays(viewMonday, -7))} className="gap-1">
+                <ChevronLeft className="w-4 h-4" />
+                <span className="hidden sm:inline">Anterior</span>
+              </Button>
+              <div className="flex items-center gap-2">
+                <CalendarClock className="w-4 h-4 text-muted-foreground" />
+                <Select value={viewMondayISO} onValueChange={(v) => setViewMonday(new Date(v + "T00:00:00"))}>
+                  <SelectTrigger className="h-9 min-w-[220px]">
+                    <SelectValue>
+                      <span className="font-medium">
+                        {isCurrentWeek ? "Semana actual · " : ""}
+                        {formatWeekLabel(viewMonday)}
+                      </span>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {historyWeeks.map((m, i) => (
+                      <SelectItem key={toISODate(m)} value={toISODate(m)}>
+                        {i === 0 ? "Semana actual · " : i === 1 ? "Semana anterior · " : `Hace ${i} sem · `}
+                        {formatWeekLabel(m)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setViewMonday(addDays(viewMonday, 7))}
+                disabled={isCurrentWeek || isFutureWeek}
+                className="gap-1"
+              >
+                <span className="hidden sm:inline">Siguiente</span>
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </CardContent>
+          </Card>
+
+          {!isCurrentWeek && (
+            <p className="text-xs text-muted-foreground mb-3">
+              Estás viendo el historial. Solo puedes marcar tareas como completadas (contarán como tarde según la fecha).
+            </p>
+          )}
+
           <div className="grid gap-3 sm:grid-cols-2">
-            {tasks.map((t) => {
-              const done = isCompleteThisPeriod(t);
-              const assignee = profiles.find((p) => p.id === t.assigned_to);
+            {instances.map((inst) => {
+              const task = tasksById.get(inst.task_id);
+              if (!task) return null;
+              const insCompletions = completionsByInstance.get(inst.id) ?? [];
+              const myCompletion = insCompletions.find((c) => c.completed_by === userId);
+              const done = !!myCompletion;
+              const anyDone = insCompletions.length > 0;
+              const assignee = inst.assigned_to ? profilesById.get(inst.assigned_to) : undefined;
+
               return (
-                <Card key={t.id} className={done ? "opacity-70" : ""}>
+                <Card key={inst.id} className={anyDone && !inst.assign_to_all ? "opacity-90" : ""}>
                   <CardContent className="p-4 space-y-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap mb-1">
-                          <Badge variant="outline" className={FREQ_COLOR[t.frequency]}>
-                            {FREQ_LABEL[t.frequency]}
+                          <Badge variant="outline" className={FREQ_COLOR[task.frequency]}>
+                            {FREQ_LABEL[task.frequency]}
                           </Badge>
-                          <Badge variant="secondary" className="font-bold">
-                            +{t.points} pts
-                          </Badge>
+                          <Badge variant="secondary" className="font-bold">+{task.points} pts</Badge>
+                          {inst.assign_to_all && (
+                            <Badge variant="outline" className="gap-1">
+                              <Users className="w-3 h-3" /> Todos
+                            </Badge>
+                          )}
+                          {myCompletion?.status && (
+                            <Badge variant="outline" className={STATUS_COLOR[myCompletion.status]}>
+                              {STATUS_LABEL[myCompletion.status]}
+                            </Badge>
+                          )}
                         </div>
-                        <h3 className={`font-semibold ${done ? "line-through" : ""}`}>{t.title}</h3>
+                        <h3 className={`font-semibold ${done && !inst.assign_to_all ? "line-through" : ""}`}>
+                          {task.title}
+                        </h3>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Límite: {formatDate(inst.due_date)}
+                          {myCompletion && ` · Hecha: ${formatDateTime(myCompletion.completed_at)}`}
+                        </p>
                       </div>
-                      <div className="flex gap-1">
-                        <TaskDialog
-                          profiles={profiles}
-                          task={t}
-                          onSaved={() => qc.invalidateQueries({ queryKey: ["tasks"] })}
-                          trigger={
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <Pencil className="w-3.5 h-3.5" />
-                            </Button>
-                          }
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive"
-                          onClick={() => deleteTaskMut.mutate(t.id)}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
+                      {isCurrentWeek && (
+                        <div className="flex gap-1">
+                          <TaskDialog
+                            profiles={profiles}
+                            task={task}
+                            onSaved={async () => {
+                              await supabase.rpc("ensure_period_instances", { week_start: toISODate(todayMonday) });
+                              qc.invalidateQueries({ queryKey: ["tasks"] });
+                              qc.invalidateQueries({ queryKey: ["task_instances"] });
+                            }}
+                            trigger={
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Button>
+                            }
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive"
+                            onClick={() => deleteTaskMut.mutate(task.id)}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      )}
                     </div>
 
-                    <div className="flex items-center justify-between gap-2">
-                      <Select
-                        value={t.assigned_to ?? "none"}
-                        onValueChange={(v) =>
-                          assignMut.mutate({ taskId: t.id, profileId: v === "none" ? null : v })
-                        }
-                      >
-                        <SelectTrigger className="h-9 flex-1 max-w-[180px]">
-                          <SelectValue placeholder="Asignar a..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Sin asignar</SelectItem>
-                          {profiles.map((p) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.display_name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      {inst.assign_to_all ? (
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {profiles.map((p) => {
+                            const c = insCompletions.find((x) => x.completed_by === p.id);
+                            return (
+                              <div
+                                key={p.id}
+                                className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs border ${c ? "bg-success/10 border-success/30" : "bg-muted/50"}`}
+                                title={c ? `${p.display_name} · ${c.status ? STATUS_LABEL[c.status] : ""}` : p.display_name}
+                              >
+                                {c ? <CheckCircle2 className="w-3 h-3 text-success" /> : <Circle className="w-3 h-3" />}
+                                <span>{p.display_name.split(" ")[0]}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        isCurrentWeek ? (
+                          <Select
+                            value={inst.assigned_to ?? "none"}
+                            onValueChange={(v) =>
+                              assignMut.mutate({ instance: inst, profileId: v === "none" ? null : v })
+                            }
+                          >
+                            <SelectTrigger className="h-9 flex-1 max-w-[180px]">
+                              <SelectValue placeholder="Asignar a..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">Sin asignar</SelectItem>
+                              {profiles.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>{p.display_name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <div className="text-xs text-muted-foreground flex items-center gap-2">
+                            {assignee ? (
+                              <>
+                                <Avatar className="w-5 h-5">
+                                  <AvatarImage src={assignee.avatar_url ?? undefined} />
+                                  <AvatarFallback className="text-[10px]">
+                                    {assignee.display_name[0]?.toUpperCase()}
+                                  </AvatarFallback>
+                                </Avatar>
+                                Asignada a {assignee.display_name}
+                              </>
+                            ) : (
+                              <span>Sin asignar</span>
+                            )}
+                          </div>
+                        )
+                      )}
 
                       {done ? (
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => undoMut.mutate(done.id)}
+                          onClick={() => myCompletion && undoMut.mutate(myCompletion.id)}
                           className="gap-1"
+                          disabled={myCompletion?.completed_by !== userId}
                         >
                           <CheckCircle2 className="w-4 h-4 text-success" />
                           Hecha
                         </Button>
                       ) : (
-                        <Button size="sm" onClick={() => completeMut.mutate(t)} className="gap-1">
+                        <Button size="sm" onClick={() => completeMut.mutate({ instance: inst, task })} className="gap-1">
                           <Circle className="w-4 h-4" />
                           Completar
                         </Button>
                       )}
                     </div>
 
-                    {assignee && (
+                    {!inst.assign_to_all && isCurrentWeek && assignee && (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <Avatar className="w-5 h-5">
                           <AvatarImage src={assignee.avatar_url ?? undefined} />
@@ -428,9 +611,11 @@ function Dashboard() {
             })}
           </div>
 
-          {tasks.length === 0 && (
+          {instances.length === 0 && (
             <Card><CardContent className="p-8 text-center text-muted-foreground">
-              No hay tareas todavía. Crea la primera.
+              {isCurrentWeek
+                ? "No hay tareas todavía. Crea la primera."
+                : "No hay tareas registradas para esta semana."}
             </CardContent></Card>
           )}
         </section>
@@ -457,10 +642,7 @@ function RankingList({
           </p>
         )}
         {sorted.map(({ p, score }, idx) => (
-          <div
-            key={p.id}
-            className="flex items-center gap-3 p-3 rounded-lg bg-secondary/40"
-          >
+          <div key={p.id} className="flex items-center gap-3 p-3 rounded-lg bg-secondary/40">
             <span className="text-2xl w-8 text-center">{medals[idx] ?? `#${idx + 1}`}</span>
             <Avatar className="w-10 h-10">
               <AvatarImage src={p.avatar_url ?? undefined} />
@@ -496,6 +678,7 @@ function TaskDialog({
   const [frequency, setFrequency] = useState<Frequency>(task?.frequency ?? "weekly");
   const [points, setPoints] = useState(task?.points ?? 5);
   const [assignedTo, setAssignedTo] = useState<string>(task?.assigned_to ?? "none");
+  const [assignToAll, setAssignToAll] = useState<boolean>(task?.assign_to_all ?? false);
 
   useEffect(() => {
     if (open && task) {
@@ -503,8 +686,9 @@ function TaskDialog({
       setFrequency(task.frequency);
       setPoints(task.points);
       setAssignedTo(task.assigned_to ?? "none");
+      setAssignToAll(task.assign_to_all);
     } else if (open && !task) {
-      setTitle(""); setFrequency("weekly"); setPoints(5); setAssignedTo("none");
+      setTitle(""); setFrequency("weekly"); setPoints(5); setAssignedTo("none"); setAssignToAll(false);
     }
   }, [open, task]);
 
@@ -517,7 +701,8 @@ function TaskDialog({
       title: title.trim(),
       frequency,
       points,
-      assigned_to: assignedTo === "none" ? null : assignedTo,
+      assign_to_all: assignToAll,
+      assigned_to: assignToAll ? null : (assignedTo === "none" ? null : assignedTo),
     };
     const { error } = task
       ? await supabase.from("tasks").update(payload).eq("id", task.id)
@@ -575,18 +760,29 @@ function TaskDialog({
               />
             </div>
           </div>
-          <div className="space-y-2">
-            <Label>Asignar a</Label>
-            <Select value={assignedTo} onValueChange={setAssignedTo}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Sin asignar</SelectItem>
-                {profiles.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.display_name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="all">Asignar a todos</Label>
+              <p className="text-xs text-muted-foreground">
+                Todos los roommates la ven, la completan y ganan puntos individualmente.
+              </p>
+            </div>
+            <Switch id="all" checked={assignToAll} onCheckedChange={setAssignToAll} />
           </div>
+          {!assignToAll && (
+            <div className="space-y-2">
+              <Label>Responsable actual (la rotación seguirá desde aquí)</Label>
+              <Select value={assignedTo} onValueChange={setAssignedTo}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sin asignar</SelectItem>
+                  {profiles.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.display_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
