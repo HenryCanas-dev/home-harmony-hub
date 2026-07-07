@@ -455,7 +455,18 @@ function Dashboard() {
           )}
 
           <div className="grid gap-3 sm:grid-cols-2">
-            {instances.map((inst) => {
+            {instances
+              .filter((inst) => {
+                // En la semana actual, ocultar instancias ya completadas:
+                // - assign_to_all: ocultar cuando YO ya la hice (los demás la ven en su sesión)
+                // - normal: ocultar cuando cualquiera la completó
+                // En historial mostramos todo para auditoría.
+                if (!isCurrentWeek) return true;
+                const insC = completionsByInstance.get(inst.id) ?? [];
+                if (inst.assign_to_all) return !insC.some((c) => c.completed_by === userId);
+                return insC.length === 0;
+              })
+              .map((inst) => {
               const task = tasksById.get(inst.task_id);
               if (!task) return null;
               const insCompletions = completionsByInstance.get(inst.id) ?? [];
