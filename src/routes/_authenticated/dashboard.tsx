@@ -455,7 +455,18 @@ function Dashboard() {
           )}
 
           <div className="grid gap-3 sm:grid-cols-2">
-            {instances.map((inst) => {
+            {instances
+              .filter((inst) => {
+                // En la semana actual, ocultar instancias ya completadas:
+                // - assign_to_all: ocultar cuando YO ya la hice (los demás la ven en su sesión)
+                // - normal: ocultar cuando cualquiera la completó
+                // En historial mostramos todo para auditoría.
+                if (!isCurrentWeek) return true;
+                const insC = completionsByInstance.get(inst.id) ?? [];
+                if (inst.assign_to_all) return !insC.some((c) => c.completed_by === userId);
+                return insC.length === 0;
+              })
+              .map((inst) => {
               const task = tasksById.get(inst.task_id);
               if (!task) return null;
               const insCompletions = completionsByInstance.get(inst.id) ?? [];
@@ -697,19 +708,45 @@ function TaskDialog({
       toast.error("Ponle un título a la tarea");
       return;
     }
+    const nextAssigned = assignToAll ? null : (assignedTo === "none" ? null : assignedTo);
     const payload = {
       title: title.trim(),
       frequency,
       points,
       assign_to_all: assignToAll,
-      assigned_to: assignToAll ? null : (assignedTo === "none" ? null : assignedTo),
+      assigned_to: nextAssigned,
     };
-    const { error } = task
-      ? await supabase.from("tasks").update(payload).eq("id", task.id)
-      : await supabase.from("tasks").insert(payload);
-    if (error) {
-      toast.error(error.message);
-      return;
+    if (task) {
+      const { data, error } = await supabase
+        .from("tasks")
+        .update(payload)
+        .eq("id", task.id)
+        .select();
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      if (!data || data.length === 0) {
+        toast.error("No se pudo guardar (permiso denegado)");
+        return;
+      }
+      // Sincronizar instancias vigentes/futuras para que reflejen assign_to_all y asignado
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const { error: eInst } = await supabase
+        .from("task_instances")
+        .update({ assign_to_all: assignToAll, assigned_to: assignToAll ? null : nextAssigned })
+        .eq("task_id", task.id)
+        .gte("period_end", todayISO);
+      if (eInst) {
+        toast.error(eInst.message);
+        return;
+      }
+    } else {
+      const { error } = await supabase.from("tasks").insert(payload);
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
     }
     toast.success(task ? "Tarea actualizada" : "Tarea creada");
     setOpen(false);
