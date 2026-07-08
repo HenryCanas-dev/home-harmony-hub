@@ -24,6 +24,7 @@ import {
 import { useTaskReminders } from "@/hooks/use-task-reminders";
 import { computeStatus, pointsFor, STATUS_LABEL, STATUS_COLOR, type CompletionStatus } from "@/lib/points";
 import { startOfWeek, addDays, toISODate, formatWeekLabel, formatDate, formatDateTime, isSameDay } from "@/lib/periods";
+import { updateTaskAssignment } from "@/lib/task-actions.functions";
 
 type Frequency = "weekly" | "biweekly" | "monthly";
 
@@ -217,21 +218,29 @@ function Dashboard() {
   });
 
   const assignMut = useMutation({
-    mutationFn: async ({ instance, profileId }: { instance: TaskInstance; profileId: string | null }) => {
-      const { error: e1 } = await supabase.from("task_instances")
-        .update({ assigned_to: profileId })
-        .eq("id", instance.id);
-      if (e1) throw e1;
-      // La rotación futura continúa desde este responsable
-      const { error: e2 } = await supabase.from("tasks")
-        .update({ assigned_to: profileId, last_assigned_to: profileId })
-        .eq("id", instance.task_id);
-      if (e2) throw e2;
+    mutationFn: async ({
+      instance,
+      profileId,
+      assignToAll,
+    }: {
+      instance: TaskInstance;
+      profileId: string | null;
+      assignToAll: boolean;
+    }) => {
+      await updateTaskAssignment({
+        data: {
+          taskId: instance.task_id,
+          instanceId: instance.id,
+          assignToAll,
+          profileId,
+        },
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["task_instances"] });
       qc.invalidateQueries({ queryKey: ["tasks"] });
     },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const deleteTaskMut = useMutation({
@@ -553,14 +562,24 @@ function Dashboard() {
                         isCurrentWeek ? (
                           <Select
                             value={inst.assigned_to ?? "none"}
-                            onValueChange={(v) =>
-                              assignMut.mutate({ instance: inst, profileId: v === "none" ? null : v })
-                            }
+                            onValueChange={(v) => {
+                              if (v === "all") {
+                                assignMut.mutate({ instance: inst, profileId: null, assignToAll: true });
+                                return;
+                              }
+                              assignMut.mutate({
+                                instance: inst,
+                                profileId: v === "none" ? null : v,
+                                assignToAll: false,
+                              });
+                            }}
+                            disabled={assignMut.isPending}
                           >
                             <SelectTrigger className="h-9 flex-1 max-w-[180px]">
                               <SelectValue placeholder="Asignar a..." />
                             </SelectTrigger>
                             <SelectContent>
+                              <SelectItem value="all">Todos</SelectItem>
                               <SelectItem value="none">Sin asignar</SelectItem>
                               {profiles.map((p) => (
                                 <SelectItem key={p.id} value={p.id}>{p.display_name}</SelectItem>
