@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Sparkles, Home } from "lucide-react";
+import { InstallAppButton } from "@/components/install-app-button";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -77,9 +78,13 @@ function AuthPage() {
             <GoogleIcon />
             {loading ? "Conectando..." : "Continuar con Google"}
           </Button>
+          <div className="flex justify-center">
+            <InstallAppButton className="gap-2" />
+          </div>
           <p className="text-xs text-center text-muted-foreground pt-2">
             Solo tu y tus roommates con cuenta autorizada pueden ver las tareas.
           </p>
+
         </CardContent>
       </Card>
     </div>
