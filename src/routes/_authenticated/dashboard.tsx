@@ -25,6 +25,7 @@ import { useTaskReminders } from "@/hooks/use-task-reminders";
 import { computeStatus, pointsFor, STATUS_LABEL, STATUS_COLOR, type CompletionStatus } from "@/lib/points";
 import { startOfWeek, addDays, toISODate, formatWeekLabel, formatDate, formatDateTime, isSameDay } from "@/lib/periods";
 import { updateTaskAssignment } from "@/lib/task-actions.functions";
+import { InstallAppButton } from "@/components/install-app-button";
 
 type Frequency = "weekly" | "biweekly" | "monthly";
 
@@ -327,6 +328,7 @@ function Dashboard() {
                 <span className="text-sm font-medium">{me.display_name}</span>
               </div>
             )}
+            <InstallAppButton className="gap-1" />
             {permission !== "unsupported" && permission !== "granted" && (
               <Button variant="outline" size="sm" onClick={requestNotif} className="gap-1" title="Activar notificaciones">
                 <BellOff className="w-4 h-4" />
