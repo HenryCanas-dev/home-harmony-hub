@@ -10,24 +10,11 @@ type BIPEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 };
 
-// Capture the event as early as possible (it can fire before React mounts).
 declare global {
   interface Window {
     __deferredInstallPrompt?: BIPEvent | null;
+    __installPromptHooked?: boolean;
   }
-}
-
-if (typeof window !== "undefined" && !("__installPromptHooked" in window)) {
-  (window as unknown as Record<string, unknown>)["__installPromptHooked"] = true;
-  window.addEventListener("beforeinstallprompt", (e) => {
-    e.preventDefault();
-    window.__deferredInstallPrompt = e as BIPEvent;
-    window.dispatchEvent(new Event("installpromptready"));
-  });
-  window.addEventListener("appinstalled", () => {
-    window.__deferredInstallPrompt = null;
-    window.dispatchEvent(new Event("installpromptready"));
-  });
 }
 
 function isStandalone() {
