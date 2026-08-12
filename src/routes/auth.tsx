@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Sparkles, Home } from "lucide-react";
+import { InstallAppButton } from "@/components/install-app-button";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
