@@ -77,9 +77,13 @@ function AuthPage() {
             <GoogleIcon />
             {loading ? "Conectando..." : "Continuar con Google"}
           </Button>
+          <div className="flex justify-center">
+            <InstallAppButton className="gap-2" />
+          </div>
           <p className="text-xs text-center text-muted-foreground pt-2">
             Solo tu y tus roommates con cuenta autorizada pueden ver las tareas.
           </p>
+
         </CardContent>
       </Card>
     </div>
