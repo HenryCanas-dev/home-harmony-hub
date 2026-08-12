@@ -18,6 +18,22 @@ import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { Toaster } from "@/components/ui/sonner";
 
+const installPromptCaptureScript = `
+  (() => {
+    if (window.__installPromptHooked) return;
+    window.__installPromptHooked = true;
+    window.addEventListener("beforeinstallprompt", (event) => {
+      event.preventDefault();
+      window.__deferredInstallPrompt = event;
+      window.dispatchEvent(new Event("installpromptready"));
+    });
+    window.addEventListener("appinstalled", () => {
+      window.__deferredInstallPrompt = null;
+      window.dispatchEvent(new Event("installpromptready"));
+    });
+  })();
+`;
+
 function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -117,6 +133,7 @@ function RootShell({ children }: { children: ReactNode }) {
     <html lang="en">
       <head>
         <HeadContent />
+        <script dangerouslySetInnerHTML={{ __html: installPromptCaptureScript }} />
       </head>
       <body>
         {children}

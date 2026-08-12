@@ -82,6 +82,7 @@ const FREQ_COLOR: Record<Frequency, string> = {
 };
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
+  ssr: false,
   head: () => ({
     meta: [
       { title: "Casa Compartida · Tareas del hogar" },
