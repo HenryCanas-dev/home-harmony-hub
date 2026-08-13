@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 export type ReminderTask = {
   id: string;
   title: string;
+  dueDate: string;
   assignedToMe: boolean;
   done: boolean;
 };
@@ -26,9 +27,10 @@ export type NotifPermission = "default" | "granted" | "denied" | "unsupported";
 
 export function useTaskReminders(tasks: ReminderTask[]) {
   const [permission, setPermission] = useState<NotifPermission>("default");
-  const lastFiredRef = useRef<Record<string, number>>(loadNotified());
+  const lastFiredRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
+    lastFiredRef.current = loadNotified();
     if (typeof window === "undefined" || !("Notification" in window)) {
       setPermission("unsupported");
       return;
@@ -42,38 +44,49 @@ export function useTaskReminders(tasks: ReminderTask[]) {
     setPermission(res as NotifPermission);
   };
 
-  // Fire notifications for pending tasks assigned to me, max once per 6h per task
+  // Notify in the final 24 hours, and again after the deadline. One alert per stage/day.
   useEffect(() => {
     if (permission !== "granted") return;
-    const now = Date.now();
-    const SIX_H = 6 * 60 * 60 * 1000;
-    const updated = { ...lastFiredRef.current };
-    let changed = false;
+    const checkDeadlines = () => {
+      const now = Date.now();
+      const DAY = 24 * 60 * 60 * 1000;
+      const updated = { ...lastFiredRef.current };
+      let changed = false;
 
-    tasks
-      .filter((t) => t.assignedToMe && !t.done)
-      .forEach((t) => {
-        const last = updated[t.id] ?? 0;
-        if (now - last > SIX_H) {
-          try {
-            new Notification("Tarea pendiente 🏠", {
-              body: t.title,
-              icon: "/icon-512.png",
-              badge: "/icon-512.png",
-              tag: `task-${t.id}`,
-            });
-            updated[t.id] = now;
-            changed = true;
-          } catch {
-            // ignore
+      tasks
+        .filter((t) => t.assignedToMe && !t.done)
+        .forEach((t) => {
+          const due = new Date(`${t.dueDate}T23:59:59`).getTime();
+          const remaining = due - now;
+          if (remaining > DAY) return;
+          const stage = remaining >= 0 ? "soon" : "overdue";
+          const notificationKey = `${t.id}:${stage}`;
+          const last = updated[notificationKey] ?? 0;
+          if (now - last > DAY) {
+            try {
+              new Notification(stage === "soon" ? "Tarea por vencer 🏠" : "Tarea vencida 🏠", {
+                body: stage === "soon" ? `${t.title} vence hoy.` : `${t.title} sigue pendiente.`,
+                icon: "/icon-512.png",
+                badge: "/icon-512.png",
+                tag: `task-${notificationKey}`,
+              });
+              updated[notificationKey] = now;
+              changed = true;
+            } catch {
+              // ignore
+            }
           }
-        }
-      });
+        });
 
-    if (changed) {
-      lastFiredRef.current = updated;
-      saveNotified(updated);
-    }
+      if (changed) {
+        lastFiredRef.current = updated;
+        saveNotified(updated);
+      }
+    };
+
+    checkDeadlines();
+    const timer = window.setInterval(checkDeadlines, 60_000);
+    return () => window.clearInterval(timer);
   }, [tasks, permission]);
 
   return { permission, request };

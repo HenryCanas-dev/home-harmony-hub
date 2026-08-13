@@ -1,9 +1,9 @@
 {
-  "id": "/",
+  "id": "/casa-compartida",
   "name": "Casa Compartida",
   "short_name": "Casa",
   "description": "Tareas del hogar entre roommates",
-  "start_url": "/dashboard",
+  "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
