@@ -26,13 +26,14 @@ function isStandalone() {
 }
 
 export function InstallAppButton({ className }: { className?: string }) {
-  const [ready, setReady] = useState(false);
   const [installed, setInstalled] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
   const [isAndroid, setIsAndroid] = useState(false);
   const [isChrome, setIsChrome] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [isSecure, setIsSecure] = useState(true);
+  const [chromeUrl, setChromeUrl] = useState("/");
 
   useEffect(() => {
     setInstalled(isStandalone());
@@ -40,10 +41,9 @@ export function InstallAppButton({ className }: { className?: string }) {
     setIsIOS(/iphone|ipad|ipod/i.test(ua));
     setIsAndroid(/android/i.test(ua));
     setIsChrome(/chrome|crios/i.test(ua) && !/edg|opr|samsungbrowser/i.test(ua));
-    const sync = () => setReady(Boolean(window.__deferredInstallPrompt));
-    sync();
-    window.addEventListener("installpromptready", sync);
-    return () => window.removeEventListener("installpromptready", sync);
+    setIsSecure(window.isSecureContext);
+    const current = new URL(window.location.href);
+    setChromeUrl(`intent://${current.host}${current.pathname}${current.search}#Intent;scheme=${current.protocol.replace(":", "")};package=com.android.chrome;end`);
   }, []);
 
   if (installed) return null;
@@ -71,7 +71,6 @@ export function InstallAppButton({ className }: { className?: string }) {
     const choice = await evt.userChoice;
     if (choice.outcome === "accepted") setInstalled(true);
     window.__deferredInstallPrompt = null;
-    setReady(false);
   };
 
   return (
@@ -103,15 +102,15 @@ export function InstallAppButton({ className }: { className?: string }) {
             <div className="space-y-3 text-sm text-muted-foreground">
               <p>Para instalarla en Android, abre este sitio directamente en Google Chrome.</p>
               <Button variant="outline" size="sm" asChild>
-                <a href={typeof window === "undefined" ? "/" : window.location.href} target="_blank" rel="noreferrer">
-                  <ExternalLink className="w-4 h-4" /> Abrir en el navegador
+                <a href={chromeUrl}>
+                  <ExternalLink className="w-4 h-4" /> Abrir en Chrome
                 </a>
               </Button>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Abre el sitio publicado en Chrome o Safari para añadirlo a tu pantalla de inicio.</p>
           )}
-          {!window.isSecureContext && <p className="text-xs text-destructive">La instalación requiere una conexión HTTPS segura.</p>}
+          {!isSecure && <p className="text-xs text-destructive">La instalación requiere una conexión HTTPS segura.</p>}
         </DialogContent>
       </Dialog>
     </>
