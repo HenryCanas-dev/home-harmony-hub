@@ -293,7 +293,7 @@ function Dashboard() {
       })
       .map((inst) => {
         const t = tasksById.get(inst.task_id)!;
-        return { id: inst.id, title: t.title, assignedToMe: true, done: false };
+        return { id: inst.id, title: t.title, dueDate: inst.due_date, assignedToMe: true, done: false };
       });
   }, [instances, tasksById, completionsByInstance, userId, isCurrentWeek]);
 
